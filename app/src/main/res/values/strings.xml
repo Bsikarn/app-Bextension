@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Bextension</string>
+    <string name="input_relay_description">Shows a display switcher and routes mouse gestures to a selected external display. Remote apps such as Moonlight receive direct mouse and keyboard control after handoff.</string>
+</resources>
