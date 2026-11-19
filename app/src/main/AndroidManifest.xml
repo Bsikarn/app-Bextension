@@ -39,6 +39,11 @@
             android:theme="@style/Theme.Bextension.InputCapture" />
 
         <service
+            android:name=".inputrelay.WorkspaceSessionService"
+            android:exported="false"
+            android:stopWithTask="false" />
+
+        <service
             android:name=".inputrelay.InputRelayAccessibilityService"
             android:exported="false"
             android:label="Bextension Input Relay"

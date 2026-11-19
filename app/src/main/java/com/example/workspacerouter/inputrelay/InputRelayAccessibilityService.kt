@@ -42,14 +42,8 @@ class InputRelayAccessibilityService : AccessibilityService(), DisplayManager.Di
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action != Intent.ACTION_SCREEN_OFF) return
 
-            overlayController?.close()
-            overlayController = null
-            (application as? BextensionApp)?.container?.emergencyStop()
-            disableSelf()
-            stopSelf()
-            Handler(Looper.getMainLooper()).post {
-                android.os.Process.killProcess(android.os.Process.myPid())
-            }
+            WorkspaceSession.stop()
+            stopService(Intent(this@InputRelayAccessibilityService, WorkspaceSessionService::class.java))
         }
     }
 
@@ -57,7 +51,8 @@ class InputRelayAccessibilityService : AccessibilityService(), DisplayManager.Di
         super.onServiceConnected()
         displayManager = getSystemService(DisplayManager::class.java)
         displayManager.registerDisplayListener(this, null)
-        overlayController = DisplayOverlayController(this, displayManager).also { it.refresh() }
+        WorkspaceSession.onChanged = ::updateSession
+        updateSession(WorkspaceSession.active)
         ContextCompat.registerReceiver(
             this,
             screenOffReceiver,
@@ -82,6 +77,18 @@ class InputRelayAccessibilityService : AccessibilityService(), DisplayManager.Di
         }
     }
 
+    private fun updateSession(active: Boolean) {
+        if (active) {
+            if (overlayController == null) {
+                overlayController = DisplayOverlayController(this, displayManager).also { it.refresh() }
+            }
+        } else {
+            overlayController?.close()
+            overlayController = null
+            (application as? BextensionApp)?.container?.emergencyStop()
+        }
+    }
+
     override fun onInterrupt() = Unit
 
     @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
@@ -92,7 +99,7 @@ class InputRelayAccessibilityService : AccessibilityService(), DisplayManager.Di
     override fun onKeyEvent(event: KeyEvent): Boolean {
         val reclaimShortcut = event.keyCode == KeyEvent.KEYCODE_SPACE &&
             event.isCtrlPressed && event.isAltPressed
-        if (!reclaimShortcut) return false
+        if (!reclaimShortcut || overlayController == null) return false
 
         if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
             overlayController?.activateVirtualControl()
@@ -113,6 +120,7 @@ class InputRelayAccessibilityService : AccessibilityService(), DisplayManager.Di
     }
 
     override fun onDestroy() {
+        WorkspaceSession.onChanged = null
         if (::displayManager.isInitialized) displayManager.unregisterDisplayListener(this)
         if (screenOffReceiverRegistered) {
             runCatching { unregisterReceiver(screenOffReceiver) }
@@ -278,10 +286,11 @@ private class DisplayOverlayController(
         releaseControl()
         addCursorWindow(target)
         usingGlobalMouseCapture = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
-        startCaptureActivity()
         if (usingGlobalMouseCapture) {
             service.setGlobalMouseCaptureEnabled(true)
             SystemPointerIconController.hide(service)
+        } else {
+            startCaptureActivity()
         }
         collapseTabs()
     }

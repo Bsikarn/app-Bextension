@@ -47,7 +47,8 @@ An Android multi-display workspace launcher and input router for tablets connect
 - **Mouse Gesture Routing** — Supports click, long press, live click-and-drag, and queued wheel scrolling through accessibility gestures.
 - **Android 14 Global Mouse Relay** — Captures mouse MotionEvents through `AccessibilityService` so they are not delivered to Display 0 while virtual control is active.
 - **Moonlight Direct Handoff** — Releases Bextension's virtual control when a Moonlight streaming session takes focus, allowing Moonlight to receive direct mouse and keyboard input.
-- **Emergency Stop** — Turning off the tablet screen releases input, closes overlays and blackout presentations, disables the accessibility relay, and stops the app process.
+- **Session Lifecycle** — Opening Bextension shows its floating controller. Back/finish or removing the app from Recents closes it. Switching to another app keeps the session available; reboot does not restore it.
+- **Emergency Stop** — Turning off the tablet screen releases input and closes overlays and blackout presentations without disabling Accessibility access or killing the process.
 - **Restricted Settings Shortcut** — Opens Bextension's App info page to make Android's “Allow restricted settings” control easier to reach.
 - **Custom Launcher Icon** — Uses the Bextension “B” artwork supplied with the project.
 
@@ -147,7 +148,7 @@ Run Android Lint with:
 8. Tap **Launch Workspace**.
 9. Expand the floating `<` tab and select **Virtual control** for the external display.
 
-Press `Esc` to leave virtual control. Press `Ctrl + Alt + Space` to reclaim it. Turning off the tablet screen performs the emergency stop and disables the relay; enable it again before the next session.
+Press `Esc` to leave virtual control. Press `Ctrl + Alt + Space` to reclaim it. Turning off the tablet screen stops the current workspace session. Open Bextension again to restart it; Accessibility access remains enabled. Pressing Home or switching to TikTok keeps the floating controller available. Removing Bextension from Recents or finishing its dashboard closes the controller. After reboot, it stays hidden until Bextension is opened.
 
 ---
 

@@ -5,6 +5,20 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Surface
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.DesktopWindows
+import androidx.compose.material.icons.filled.TabletMac
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -59,6 +73,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.graphics.drawable.toBitmap
 import com.example.workspacerouter.domain.model.DisplayActionMode
 import com.example.workspacerouter.domain.model.LaunchableApp
@@ -98,8 +113,9 @@ fun CommandCenterScreen(
                     Column {
                         Text("Bextension", fontWeight = FontWeight.Bold)
                         Text(
-                            "${state.displays.size} connected display(s)",
+                            "Your screens. Your workspace.",
                             style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 },
@@ -112,15 +128,20 @@ fun CommandCenterScreen(
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
+            Box(Modifier.fillMaxWidth().navigationBarsPadding(), contentAlignment = Alignment.Center) {
             Button(
                 onClick = onLaunchWorkspace,
                 enabled = state.displays.isNotEmpty(),
                 modifier = Modifier
+                    .widthIn(max = 760.dp)
                     .fillMaxWidth()
-                    .padding(16.dp),
+                    .padding(horizontal = 24.dp, vertical = 12.dp)
+                    .height(56.dp),
+                shape = RoundedCornerShape(18.dp),
             ) {
                 Icon(Icons.Default.RocketLaunch, contentDescription = null)
-                Text("  Launch Workspace")
+                Text("  Start workspace", fontWeight = FontWeight.SemiBold)
+            }
             }
         },
     ) { contentPadding ->
@@ -137,15 +158,24 @@ fun CommandCenterScreen(
                 Text("Looking for connected displays…")
             }
         } else {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
             LazyColumn(
                 contentPadding = contentPadding,
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
                 modifier = Modifier
+                    .widthIn(max = 760.dp)
                     .fillMaxSize()
-                    .padding(horizontal = 16.dp),
+                    .padding(horizontal = 24.dp),
             ) {
                 item { Spacer(Modifier.height(4.dp)) }
                 item { InputRelaySetupCard() }
+                item {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Displays", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                        Text("${state.displays.size} connected", style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
                 items(state.displays, key = { it.display.id }) { route ->
                     DisplayCard(
                         route = route,
@@ -156,7 +186,8 @@ fun CommandCenterScreen(
                         onTest = { onTestDisplay(route.display.id) },
                     )
                 }
-                item { Spacer(Modifier.height(88.dp)) }
+                item { Spacer(Modifier.height(12.dp)) }
+            }
             }
         }
     }
@@ -176,15 +207,33 @@ fun CommandCenterScreen(
 @Composable
 private fun InputRelaySetupCard() {
     val context = LocalContext.current
-    Card(modifier = Modifier.fillMaxWidth()) {
+    var expanded by remember { mutableStateOf(false) }
+    var enabled by remember { mutableStateOf(false) }
+    LifecycleResumeEffect(Unit) {
+        val component = ComponentName(context, com.example.workspacerouter.inputrelay.InputRelayAccessibilityService::class.java)
+        enabled = Settings.Secure.getString(context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
+            ?.split(':')?.any { ComponentName.unflattenFromString(it) == component } == true
+        onPauseOrDispose { }
+    }
+    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Column(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text("Multi-display input relay", style = MaterialTheme.typography.titleMedium)
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Icon(if (enabled) Icons.Default.CheckCircle else Icons.Default.Apps, null,
+                    tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
+                Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                    Text("Mouse control", style = MaterialTheme.typography.titleMedium)
+                    Text(if (enabled) "Ready for your external display" else "One-time setup required",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "Hide" else if (enabled) "Manage" else "Set up") }
+            }
+            if (expanded) {
             Text(
-                "Enable Bextension Input Relay once to use floating display tabs, " +
-                    "virtual cursor control, and direct Moonlight input handoff.",
+                "Enable Bextension Input Relay in Accessibility to control your external display with a mouse.",
                 style = MaterialTheme.typography.bodyMedium,
             )
             Text(
@@ -219,10 +268,12 @@ private fun InputRelaySetupCard() {
             ) {
                 Text("Open Accessibility settings")
             }
+            }
         }
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DisplayCard(
     route: RoutedDisplay,
@@ -233,34 +284,48 @@ private fun DisplayCard(
     onTest: () -> Unit,
 ) {
     val descriptor = route.display
+    val isTabletDisplay = descriptor.id == android.view.Display.DEFAULT_DISPLAY
     val selectedApp = apps.firstOrNull { it.packageName == route.assignment.packageName }
 
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Column(
-            modifier = Modifier.padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Text(descriptor.name, style = MaterialTheme.typography.titleLarge)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+                    Icon(if (isTabletDisplay) Icons.Default.TabletMac else Icons.Default.DesktopWindows,
+                        null, modifier = Modifier.padding(12.dp).size(24.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Column(Modifier.weight(1f).padding(start = 14.dp)) {
+                    Text(if (isTabletDisplay) "This tablet" else "External display", style = MaterialTheme.typography.titleMedium)
+                    Text(descriptor.name, style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                }
+                Text("D${descriptor.id}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             Text(
-                "Display ${descriptor.id}  •  ${descriptor.physicalWidthPx} × " +
+                "${descriptor.physicalWidthPx} × " +
                     "${descriptor.physicalHeightPx}  •  ${"%.1f".format(descriptor.refreshRateHz)} Hz",
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                RadioButton(
+            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                SegmentedButton(
+                    shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
                     selected = route.assignment.mode == DisplayActionMode.LAUNCH_APP,
                     onClick = { onSetMode(descriptor.id, DisplayActionMode.LAUNCH_APP) },
-                )
-                Text("Launch app")
-                RadioButton(
+                ) { Text(if (isTabletDisplay) "Keep active" else "Open app") }
+                SegmentedButton(
+                    shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
                     selected = route.assignment.mode == DisplayActionMode.BLACK_OUT,
                     onClick = { onSetMode(descriptor.id, DisplayActionMode.BLACK_OUT) },
-                )
-                Text("Blackout")
+                ) { Text("Blackout") }
             }
 
-            if (route.assignment.mode == DisplayActionMode.LAUNCH_APP) {
+            if (route.assignment.mode == DisplayActionMode.LAUNCH_APP && !isTabletDisplay) {
                 FilledTonalButton(
                     onClick = onPickApp,
                     enabled = !loadingApps,
@@ -271,12 +336,21 @@ private fun DisplayCard(
                     } else {
                         Icon(Icons.Default.Apps, contentDescription = null)
                     }
-                    Text("  ${selectedApp?.label ?: if (loadingApps) "Loading apps…" else "Choose app"}")
+                    Text("  ${selectedApp?.label ?: if (loadingApps) "Loading apps…" else "Choose an app"}", modifier = Modifier.weight(1f))
+                    Icon(Icons.Default.ChevronRight, null)
                 }
             }
 
+            if (isTabletDisplay && route.assignment.mode == DisplayActionMode.LAUNCH_APP) {
+                Text(
+                    "Use touch here while your mouse controls the external display.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
             TextButton(onClick = onTest, modifier = Modifier.align(Alignment.End)) {
-                Text("Test display")
+                Text("Apply to this display")
             }
         }
     }
@@ -303,7 +377,15 @@ private fun AppPickerDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Choose an app (${filteredApps.size})") },
+        modifier = Modifier.padding(24.dp).widthIn(max = 680.dp).fillMaxWidth(),
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+        title = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Choose an app")
+                Text("${filteredApps.size} apps", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(

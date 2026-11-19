@@ -101,16 +101,16 @@ class MainViewModel(
         val displayId = route.display.id
         when (route.assignment.mode) {
             DisplayActionMode.LAUNCH_APP -> {
+                if (displayId == Display.DEFAULT_DISPLAY) {
+                    mainDisplayBlackout.value = false
+                    return
+                }
                 val packageName = route.assignment.packageName
                 if (packageName == null) {
                     report("Choose an app for ${route.display.name}")
                     return
                 }
-                if (displayId != Display.DEFAULT_DISPLAY) {
-                    commandExecutor.setSecondaryBlackout(displayId, false)
-                } else {
-                    mainDisplayBlackout.value = false
-                }
+                commandExecutor.setSecondaryBlackout(displayId, false)
                 commandExecutor.launchApp(packageName, displayId)
                     .onFailure {
                         report("Could not launch $packageName on ${route.display.name}: ${it.userMessage()}")

@@ -1,6 +1,7 @@
 package com.example.workspacerouter.presentation
 
 import android.os.Bundle
+import android.content.Intent
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -21,10 +22,21 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.workspacerouter.BextensionApp
+import com.example.workspacerouter.inputrelay.WorkspaceSessionService
 import com.example.workspacerouter.presentation.commandcenter.CommandCenterScreen
 import com.example.workspacerouter.ui.theme.BextensionTheme
 
 class MainActivity : ComponentActivity() {
+
+    override fun onStart() {
+        super.onStart()
+        startService(Intent(this, WorkspaceSessionService::class.java))
+    }
+
+    override fun onDestroy() {
+        if (isFinishing) stopService(Intent(this, WorkspaceSessionService::class.java))
+        super.onDestroy()
+    }
 
     private val viewModel: MainViewModel by viewModels {
         val container = (application as BextensionApp).container
