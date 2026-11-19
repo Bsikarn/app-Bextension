@@ -23,6 +23,8 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.view.ViewConfiguration
+import android.graphics.Typeface
 import android.view.accessibility.AccessibilityEvent
 import android.widget.Button
 import android.widget.LinearLayout
@@ -38,6 +40,10 @@ class InputRelayAccessibilityService : AccessibilityService(), DisplayManager.Di
     private lateinit var displayManager: DisplayManager
     private var overlayController: DisplayOverlayController? = null
     private var screenOffReceiverRegistered = false
+    private val routingHandler = Handler(Looper.getMainLooper())
+    private val restoreMouseRouting = Runnable {
+        overlayController?.restoreMouseRouting()
+    }
     private val screenOffReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action != Intent.ACTION_SCREEN_OFF) return
@@ -49,11 +55,14 @@ class InputRelayAccessibilityService : AccessibilityService(), DisplayManager.Di
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        if (::displayManager.isInitialized) displayManager.unregisterDisplayListener(this)
+        overlayController?.close()
+        overlayController = null
         displayManager = getSystemService(DisplayManager::class.java)
         displayManager.registerDisplayListener(this, null)
         WorkspaceSession.onChanged = ::updateSession
         updateSession(WorkspaceSession.active)
-        ContextCompat.registerReceiver(
+        if (!screenOffReceiverRegistered) ContextCompat.registerReceiver(
             this,
             screenOffReceiver,
             IntentFilter(Intent.ACTION_SCREEN_OFF),
@@ -64,16 +73,14 @@ class InputRelayAccessibilityService : AccessibilityService(), DisplayManager.Di
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         event ?: return
-        val packageName = event.packageName?.toString() ?: return
-        val className = event.className?.toString().orEmpty()
-
-        if (packageName in REMOTE_APP_PACKAGES && className.endsWith(".Game")) {
-            val displayId = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                event.displayId
-            } else {
-                overlayController?.currentSelectedDisplayId() ?: Display.DEFAULT_DISPLAY
-            }
-            overlayController?.enterDirectHandoff(displayId)
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
+            event.packageName?.toString() != packageName &&
+            overlayController?.isVirtualControlActive() == true
+        ) {
+            // Let the window/focus transition finish, then restore only mouse interception.
+            // Do not bring a D0 activity forward or change the user's chosen target display.
+            routingHandler.removeCallbacks(restoreMouseRouting)
+            routingHandler.postDelayed(restoreMouseRouting, 120L)
         }
     }
 
@@ -83,8 +90,10 @@ class InputRelayAccessibilityService : AccessibilityService(), DisplayManager.Di
                 overlayController = DisplayOverlayController(this, displayManager).also { it.refresh() }
             }
         } else {
-            overlayController?.close()
+            routingHandler.removeCallbacks(restoreMouseRouting)
+            val previousController = overlayController
             overlayController = null
+            previousController?.close()
             (application as? BextensionApp)?.container?.emergencyStop()
         }
     }
@@ -120,6 +129,7 @@ class InputRelayAccessibilityService : AccessibilityService(), DisplayManager.Di
     }
 
     override fun onDestroy() {
+        routingHandler.removeCallbacksAndMessages(null)
         WorkspaceSession.onChanged = null
         if (::displayManager.isInitialized) displayManager.unregisterDisplayListener(this)
         if (screenOffReceiverRegistered) {
@@ -170,6 +180,15 @@ class InputRelayAccessibilityService : AccessibilityService(), DisplayManager.Di
             },
         )
         setServiceInfo(updatedInfo)
+    }
+
+    internal fun ensureGlobalMouseCaptureEnabled() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return
+        val requiredSources = InputDevice.SOURCE_MOUSE or
+            InputDevice.SOURCE_MOUSE_RELATIVE or InputDevice.SOURCE_TOUCHPAD
+        if (serviceInfo.motionEventSources != requiredSources) {
+            setGlobalMouseCaptureEnabled(true)
+        }
     }
 
     internal fun dispatchStroke(
@@ -240,8 +259,12 @@ private class DisplayOverlayController(
         val windowManager: WindowManager,
         val root: LinearLayout,
         var expanded: Boolean,
+        val params: WindowManager.LayoutParams,
+        val positionKey: String,
+        var dockEdge: String,
     )
 
+    private val positions = service.getSharedPreferences("floating_controller_positions", Context.MODE_PRIVATE)
     private val tabs = mutableMapOf<Int, OverlayWindow>()
     private var cursorWindow: Pair<WindowManager, CursorView>? = null
     private var usingGlobalMouseCapture = false
@@ -251,6 +274,15 @@ private class DisplayOverlayController(
         ?: Display.DEFAULT_DISPLAY
 
     fun currentSelectedDisplayId(): Int = selectedDisplayId
+
+    fun isVirtualControlActive(): Boolean = cursorWindow != null
+
+    fun restoreMouseRouting() {
+        if (usingGlobalMouseCapture && cursorWindow != null) {
+            service.setGlobalMouseCaptureEnabled(true)
+        }
+    }
+
 
     fun refresh() {
         val connected = displayManager.displays.filter(Display::isValid)
@@ -314,7 +346,11 @@ private class DisplayOverlayController(
             gravity = Gravity.CENTER
             setPadding(dp(1), dp(1), dp(1), dp(1))
             background = panelBackground()
+            elevation = dp(8).toFloat()
         }
+        val positionKey = "${display.name}.${display.displayId}"
+        val screenWidth = displayContext.resources.displayMetrics.widthPixels
+        val screenHeight = displayContext.resources.displayMetrics.heightPixels
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -323,9 +359,9 @@ private class DisplayOverlayController(
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT,
         ).apply {
-            gravity = Gravity.TOP or Gravity.END
-            x = 0
-            y = dp(72)
+            gravity = Gravity.TOP or Gravity.LEFT
+            x = (positions.getFloat("$positionKey.x", 1f) * screenWidth).toInt()
+            y = (positions.getFloat("$positionKey.y", 0.12f) * screenHeight).toInt()
             title = "Bextension D${display.displayId}"
         }
         runCatching { windowManager.addView(root, params) }
@@ -335,6 +371,9 @@ private class DisplayOverlayController(
                     windowManager = windowManager,
                     root = root,
                     expanded = false,
+                    params = params,
+                    positionKey = positionKey,
+                    dockEdge = positions.getString("$positionKey.edge", "right") ?: "right",
                 )
             }
     }
@@ -345,15 +384,29 @@ private class DisplayOverlayController(
             root.removeAllViews()
             val panelPadding = if (overlay.expanded) dp(8) else dp(1)
             root.setPadding(panelPadding, panelPadding, panelPadding, panelPadding)
+            root.minimumWidth = if (overlay.expanded) dp(240) else 0
+            root.background = if (overlay.expanded) panelBackground() else null
 
             root.addView(TextView(root.context).apply {
-                text = if (overlay.expanded) {
-                    "Bextension • D${overlay.displayId}"
-                } else {
-                    "<"
+                text = if (overlay.expanded) "Bextension  ·  Collapse" else ""
+                if (!overlay.expanded) {
+                    background = android.graphics.drawable.LayerDrawable(arrayOf(
+                        GradientDrawable().apply {
+                            shape = GradientDrawable.OVAL
+                            setColor(Color.WHITE)
+                            setStroke(dp(1).coerceAtLeast(1), Color.rgb(45, 49, 60))
+                        },
+                    )).apply {
+                        setLayerSize(0, dp(16), dp(16))
+                        setLayerGravity(0, Gravity.CENTER)
+                    }
                 }
                 setTextColor(Color.WHITE)
-                textSize = if (overlay.expanded) 13f else 20f
+                textSize = if (overlay.expanded) 13f else 22f
+                minWidth = dp(44)
+                minHeight = dp(44)
+                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                contentDescription = "Drag to move. Tap to ${if (overlay.expanded) "collapse" else "expand"} mouse controls"
                 gravity = Gravity.CENTER
                 setPadding(
                     if (overlay.expanded) dp(6) else dp(8),
@@ -365,9 +418,19 @@ private class DisplayOverlayController(
                     overlay.expanded = !overlay.expanded
                     rebuildTabs()
                 }
+                installDragHandle(this, overlay)
             })
 
+            root.post { clampTab(overlay) }
             if (!overlay.expanded) return@forEach
+
+            root.addView(TextView(root.context).apply {
+                text = "MOUSE TARGET"
+                textSize = 10f
+                letterSpacing = 0.12f
+                setTextColor(Color.rgb(164, 174, 195))
+                setPadding(dp(10), dp(12), dp(10), dp(4))
+            })
 
             val displayRow = LinearLayout(root.context).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -377,9 +440,18 @@ private class DisplayOverlayController(
                 .filter { it.isValid && it.displayId != Display.DEFAULT_DISPLAY }
                 .forEach { display ->
                 displayRow.addView(Button(root.context).apply {
-                    text = "D${display.displayId}"
+                    text = "${if (display.displayId == selectedDisplayId) "✓ " else ""}Screen ${display.displayId}"
                     isAllCaps = false
-                    isEnabled = display.displayId != selectedDisplayId
+                    stylePopupButton(this, display.displayId == selectedDisplayId)
+                    if (display.displayId == selectedDisplayId) {
+                        background = GradientDrawable().apply {
+                            cornerRadius = dp(12).toFloat()
+                            setColor(Color.rgb(30, 126, 83))
+                        }
+                    }
+                    layoutParams = LinearLayout.LayoutParams(0, dp(44), 1f).apply {
+                        setMargins(dp(3), dp(4), dp(3), dp(4))
+                    }
                     setOnClickListener {
                         selectedDisplayId = display.displayId
                         rebuildTabs()
@@ -392,25 +464,122 @@ private class DisplayOverlayController(
                 text = if (selectedDisplayId == Display.DEFAULT_DISPLAY) {
                     "Connect external display"
                 } else {
-                    "Virtual control D$selectedDisplayId"
+                    "Control display $selectedDisplayId"
                 }
                 isAllCaps = false
+                stylePopupButton(this, true)
                 isEnabled = selectedDisplayId != Display.DEFAULT_DISPLAY
                 setOnClickListener { activateVirtualControl() }
             })
             root.addView(Button(root.context).apply {
-                text = "Direct handoff"
+                text = "Use app's own mouse"
                 isAllCaps = false
+                stylePopupButton(this, false)
                 isEnabled = selectedDisplayId != Display.DEFAULT_DISPLAY
                 setOnClickListener { enterDirectHandoff(selectedDisplayId) }
             })
             root.addView(TextView(root.context).apply {
-                text = "Ctrl+Alt+Space: reclaim control"
+                text = "Drag circle to an edge · Tap to fold"
                 setTextColor(Color.LTGRAY)
                 textSize = 11f
                 gravity = Gravity.CENTER
                 setPadding(dp(6), dp(3), dp(6), dp(3))
             })
+        }
+    }
+
+    private fun stylePopupButton(button: Button, primary: Boolean) {
+        button.textSize = 12f
+        button.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        button.minimumHeight = dp(44)
+        button.minHeight = dp(44)
+        button.elevation = 0f
+        button.stateListAnimator = null
+        button.setTextColor(if (primary) Color.WHITE else Color.rgb(205, 213, 230))
+        button.background = GradientDrawable().apply {
+            cornerRadius = dp(12).toFloat()
+            setColor(if (primary) Color.rgb(82, 100, 197) else Color.rgb(43, 49, 63))
+        }
+        button.layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+        ).apply { setMargins(dp(3), dp(4), dp(3), dp(4)) }
+    }
+
+    private fun clampTab(overlay: OverlayWindow, chooseEdge: Boolean = false) {
+        if (!overlay.root.isAttachedToWindow) return
+        val metrics = overlay.root.context.resources.displayMetrics
+        val bounds = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            overlay.windowManager.maximumWindowMetrics.bounds
+        } else {
+            android.graphics.Rect(0, 0, metrics.widthPixels, metrics.heightPixels)
+        }
+        overlay.params.x = overlay.params.x.coerceIn(0, (bounds.width() - overlay.root.width).coerceAtLeast(0))
+        overlay.params.y = overlay.params.y.coerceIn(0, (bounds.height() - overlay.root.height).coerceAtLeast(0))
+        val maxX = (bounds.width() - overlay.root.width).coerceAtLeast(0)
+        val maxY = (bounds.height() - overlay.root.height).coerceAtLeast(0)
+        if (chooseEdge) {
+            overlay.dockEdge = listOf(
+                "left" to overlay.params.x,
+                "right" to maxX - overlay.params.x,
+                "top" to overlay.params.y,
+                "bottom" to maxY - overlay.params.y,
+            ).minBy { it.second }.first
+        }
+        when (overlay.dockEdge) {
+            "left" -> overlay.params.x = 0
+            "right" -> overlay.params.x = maxX
+            "top" -> overlay.params.y = 0
+            "bottom" -> overlay.params.y = maxY
+        }
+        runCatching { overlay.windowManager.updateViewLayout(overlay.root, overlay.params) }
+    }
+
+    @android.annotation.SuppressLint("ClickableViewAccessibility")
+    private fun installDragHandle(handle: View, overlay: OverlayWindow) {
+        var downX = 0f
+        var downY = 0f
+        var initialX = 0
+        var initialY = 0
+        var dragging = false
+        val slop = ViewConfiguration.get(handle.context).scaledTouchSlop
+        handle.setOnTouchListener { view, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    downX = event.rawX
+                    downY = event.rawY
+                    initialX = overlay.params.x
+                    initialY = overlay.params.y
+                    dragging = false
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = event.rawX - downX
+                    val dy = event.rawY - downY
+                    if (abs(dx) > slop || abs(dy) > slop) dragging = true
+                    if (dragging) {
+                        overlay.params.x = initialX + dx.toInt()
+                        overlay.params.y = initialY + dy.toInt()
+                        clampTab(overlay, chooseEdge = true)
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    if (!dragging) {
+                        view.performClick()
+                    } else {
+                        val metrics = overlay.root.context.resources.displayMetrics
+                        positions.edit()
+                            .putString("${overlay.positionKey}.edge", overlay.dockEdge)
+                            .putFloat("${overlay.positionKey}.x", overlay.params.x.toFloat() / metrics.widthPixels.coerceAtLeast(1))
+                            .putFloat("${overlay.positionKey}.y", overlay.params.y.toFloat() / metrics.heightPixels.coerceAtLeast(1))
+                            .apply()
+                    }
+                    true
+                }
+                MotionEvent.ACTION_CANCEL -> true
+                else -> false
+            }
         }
     }
 
@@ -458,6 +627,7 @@ private class DisplayOverlayController(
     private var dragLastPoint: Pair<Float, Float>? = null
     private var pendingDragPoint: Pair<Float, Float>? = null
     private var dragReleaseRequested = false
+    private var controlGeneration = 0
 
     private fun handleCapturedMotion(event: MotionEvent): Boolean {
         val cursor = cursorWindow?.second ?: return false
@@ -566,9 +736,7 @@ private class DisplayOverlayController(
         val willContinue = !dragReleaseRequested
         val path = Path().apply {
             moveTo(start.first, start.second)
-            if (start == end) {
-                lineTo(end.first + 0.01f, end.second)
-            } else {
+            if (start != end) {
                 lineTo(end.first, end.second)
             }
         }
@@ -580,7 +748,9 @@ private class DisplayOverlayController(
 
         pendingDragPoint = null
         gestureInFlight = true
+        val generation = controlGeneration
         service.dispatchStroke(selectedDisplayId, nextStroke) {
+            if (generation != controlGeneration || cursorWindow == null) return@dispatchStroke
             gestureInFlight = false
             dragLastPoint = end
             activeDragStroke = if (willContinue) nextStroke else null
@@ -607,6 +777,7 @@ private class DisplayOverlayController(
     }
 
     private fun releaseControl() {
+        controlGeneration++
         gestureInFlight = false
         pendingScrollAmount = 0f
         resetLiveDrag()
@@ -652,7 +823,9 @@ private class DisplayOverlayController(
     private fun runGesture(inject: ((() -> Unit) -> Unit)) {
         if (gestureInFlight) return
         gestureInFlight = true
+        val generation = controlGeneration
         inject {
+            if (generation != controlGeneration || cursorWindow == null) return@inject
             gestureInFlight = false
             if (!usingGlobalMouseCapture) InputCaptureBridge.reclaimFocus()
             val queuedScroll = pendingScrollAmount

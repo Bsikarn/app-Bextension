@@ -3,20 +3,23 @@ package com.example.workspacerouter.inputrelay
 import android.app.Service
 import android.content.Intent
 import android.os.IBinder
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /** Session state is intentionally in memory: reboot or process death never restores overlays. */
 internal object WorkspaceSession {
-    var active = false
-        private set
+    private val mutableActive = MutableStateFlow(false)
+    val state = mutableActive.asStateFlow()
+    val active: Boolean get() = mutableActive.value
     var onChanged: ((Boolean) -> Unit)? = null
 
     fun start() {
-        active = true
+        mutableActive.value = true
         onChanged?.invoke(true)
     }
 
     fun stop() {
-        active = false
+        mutableActive.value = false
         onChanged?.invoke(false)
     }
 }

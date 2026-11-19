@@ -42,11 +42,11 @@ An Android multi-display workspace launcher and input router for tablets connect
 - **Installed App Picker** — Searchable grid of launchable apps with application icons, labels, and package names.
 - **Per-Display Blackout** — Uses a black `Presentation` on external displays and a zero-brightness fullscreen view on the tablet.
 - **Main-Screen Wake Gesture** — Double-tap or press Back to leave the tablet blackout screen.
-- **Floating Display Controller** — A collapsible `<` tab is attached to the edge of every connected display.
+- **Floating Display Controller** — A compact 16dp white circle with a thin dark outline opens the controller. Drag it to any screen edge; each display remembers its position. The selected screen is highlighted in green.
 - **Virtual External-Display Cursor** — Draws a compact black cursor with a white outline on the selected external display.
 - **Mouse Gesture Routing** — Supports click, long press, live click-and-drag, and queued wheel scrolling through accessibility gestures.
 - **Android 14 Global Mouse Relay** — Captures mouse MotionEvents through `AccessibilityService` so they are not delivered to Display 0 while virtual control is active.
-- **Moonlight Direct Handoff** — Releases Bextension's virtual control when a Moonlight streaming session takes focus, allowing Moonlight to receive direct mouse and keyboard input.
+- **Manual Direct Handoff** — Use “Use app's own mouse” to release virtual control and let Moonlight handle native input. Keep Virtual Control enabled when using tablet touch alongside the external-display mouse.
 - **Session Lifecycle** — Opening Bextension shows its floating controller. Back/finish or removing the app from Recents closes it. Switching to another app keeps the session available; reboot does not restore it.
 - **Emergency Stop** — Turning off the tablet screen releases input and closes overlays and blackout presentations without disabling Accessibility access or killing the process.
 - **Restricted Settings Shortcut** — Opens Bextension's App info page to make Android's “Allow restricted settings” control easier to reach.
@@ -146,7 +146,7 @@ Run Android Lint with:
 6. Enable **Bextension Input Relay**.
 7. Connect the external display and configure each display card.
 8. Tap **Launch Workspace**.
-9. Expand the floating `<` tab and select **Virtual control** for the external display.
+9. Tap the floating circle and select **Control display** for the external display.
 
 Press `Esc` to leave virtual control. Press `Ctrl + Alt + Space` to reclaim it. Turning off the tablet screen stops the current workspace session. Open Bextension again to restart it; Accessibility access remains enabled. Pressing Home or switching to TikTok keeps the floating controller available. Removing Bextension from Recents or finishing its dashboard closes the controller. After reboot, it stays hidden until Bextension is opened.
 
@@ -170,4 +170,6 @@ The project also includes `AndroidHiddenApiBypass` to make a best-effort attempt
 - Android versions below 14 use the focused Capture Activity fallback instead of global Accessibility mouse MotionEvents.
 - Virtual input is translated to accessibility touch gestures; it is not equivalent to privileged system-level input injection.
 - Moonlight direct input depends on Moonlight successfully receiving focus on the external display.
+- In “Use app's own mouse” mode, touching the tablet may release Moonlight's native pointer capture. Use Virtual Control for tablet touch alongside the external-display mouse.
+- Accessibility “Not working” and intermittent TikTok connectivity reports on HyperOS remain unconfirmed issues; lifecycle and gesture callback handling have been improved, but these are not claimed as resolved.
 

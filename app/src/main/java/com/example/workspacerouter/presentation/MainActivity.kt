@@ -30,6 +30,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        com.example.workspacerouter.inputrelay.WorkspaceSession.start()
         startService(Intent(this, WorkspaceSessionService::class.java))
     }
 
